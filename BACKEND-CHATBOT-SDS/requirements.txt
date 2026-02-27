@@ -1,0 +1,10 @@
+Flask==3.0.0
+flask-cors==4.0.0
+flask-pymongo==2.3.0
+pymongo==4.6.1
+flask-bcrypt==1.0.1
+flask-jwt-extended==4.6.0
+python-dotenv==1.0.0
+nltk==3.8.1
+textblob==0.17.1
+gunicorn==21.2.0
