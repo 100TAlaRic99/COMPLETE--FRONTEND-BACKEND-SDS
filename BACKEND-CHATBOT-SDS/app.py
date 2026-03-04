@@ -3,7 +3,7 @@ from flask_cors import CORS
 from flask_pymongo import PyMongo
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os
 from dotenv import load_dotenv
 from sentimentAnalysisService import sentiment_service
@@ -74,7 +74,7 @@ def register():
             'username': data['username'],
             'email': data['email'],
             'password': hashed_password,
-            'created_at': datetime.utcnow()
+            'created_at': datetime.now(timezone.utc)
         }
         
         result = users_collection.insert_one(user)
@@ -161,7 +161,7 @@ def analyze():
             'user_id': current_user_id,
             'text': text,
             'sentiment': sentiment_result,
-            'timestamp': datetime.utcnow()
+            'timestamp': datetime.now(timezone.utc)
         }
         
         chats_collection.insert_one(chat_entry)
@@ -300,7 +300,7 @@ def analyze_detailed():
                 'user_id': current_user_id,
                 'text': text,
                 'sentiment': sentiment_result,
-                'timestamp': datetime.utcnow()
+                'timestamp': datetime.now(timezone.utc)
             }
             chats_collection.insert_one(chat_entry)
         

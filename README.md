@@ -53,7 +53,11 @@ cd /path/to/finalprojectv2
 
 ### 2. Backend Setup
 
-> ⚠️ **Optional LLM Setup:** After copying `.env.example` to `.env`, set `OPENAI_API_KEY` (and `OPENAI_MODEL` if you want a specific model).
+> ⚠️ **Optional LLM Setup:** After copying `.env.example` to `.env`, set `OPENAI_API_KEY` (or `OPENROUTER_API_KEY`).
+> OpenAI has priority; if no OpenAI key is provided but an OpenRouter key
+> exists, the app will route LLM calls through OpenRouter using the model
+> `openai/gpt-oss-20b:free` by default. You can override models with
+> `OPENAI_MODEL` or `OPENROUTER_MODEL` respectively.
 
 ```bash
 # Navigate to backend directory
@@ -74,9 +78,13 @@ pip install -r requirements.txt
 # Create .env file
 cp .env.example .env
 
-# Edit .env file with your MongoDB URI and JWT secret
+# Edit .env file with your MongoDB URI, JWT secret, and optional LLM keys
 # MONGO_URI=mongodb://localhost:27017/sentiment_app
 # JWT_SECRET_KEY=your-secret-key-here
+# OPENAI_API_KEY=sk-...       # first preference
+# OPENAI_MODEL=gpt-4
+# OPENROUTER_API_KEY=sk-...   # used only if OPENAI_API_KEY not set
+# OPENROUTER_MODEL=openai/gpt-oss-20b:free
 ```
 
 ### 3. Frontend Setup

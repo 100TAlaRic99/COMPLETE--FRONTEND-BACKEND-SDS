@@ -21,11 +21,11 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 from textblob import TextBlob
 import logging
 
-# optional OpenAI LLM support
+# optional OpenAI LLM support (openai >= 1.0.0)
 try:
-    import openai
+    from openai import OpenAI
 except ImportError:
-    openai = None
+    OpenAI = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -43,20 +43,45 @@ class SentimentAnalysisService:
         self._initialize_nltk()
         self._initialize_textblob()
         self.sia = SentimentIntensityAnalyzer()
-        self._initialize_openai()
+        self.openai_client = None
+        self.openrouter_client = None
+        self._initialize_llm_clients()
         logger.info("SentimentAnalysisService initialized successfully")
 
-    def _initialize_openai(self):
-        """Configure OpenAI API key if available for LLM-based analysis."""
-        api_key = os.getenv('OPENAI_API_KEY', '')
-        if openai and api_key:
-            openai.api_key = api_key
-            logger.info("OpenAI API key configured for LLM sentiment analysis")
-        else:
-            if not openai:
-                logger.warning("OpenAI python package not installed; LLM analysis disabled")
-            elif not api_key:
-                logger.warning("OPENAI_API_KEY not set; LLM analysis disabled")
+    def _initialize_llm_clients(self):
+        """Initialize OpenAI and/or OpenRouter clients based on available API keys.
+
+        Priority:
+        1. OPENAI_API_KEY -> creates OpenAI client for official endpoint
+        2. OPENROUTER_API_KEY -> creates OpenRouter client with custom base_url
+
+        Both clients can coexist, but analyze_sentiment_llm chooses based on
+        which key is present (OpenAI takes priority).
+        """
+        if OpenAI is None:
+            logger.warning("OpenAI python package (openai>=1.0.0) not installed; LLM analysis disabled")
+            return
+
+        ai_key = os.getenv('OPENAI_API_KEY', '').strip()
+        router_key = os.getenv('OPENROUTER_API_KEY', '').strip()
+
+        if ai_key:
+            self.openai_client = OpenAI(api_key=ai_key)
+            logger.info("OpenAI client initialized for LLM sentiment analysis")
+
+        if router_key:
+            router_base_url = os.getenv(
+                'OPENROUTER_API_BASE',
+                'https://api.openrouter.ai/v1'
+            )
+            self.openrouter_client = OpenAI(
+                api_key=router_key,
+                base_url=router_base_url
+            )
+            logger.info(f"OpenRouter client initialized with base_url={router_base_url}")
+
+        if not (ai_key or router_key):
+            logger.warning("Neither OPENAI_API_KEY nor OPENROUTER_API_KEY set; LLM analysis disabled")
     
     def _initialize_nltk(self):
         """Download and initialize NLTK VADER lexicon if needed."""
@@ -354,26 +379,45 @@ class SentimentAnalysisService:
 
     def analyze_sentiment_llm(self, text, show_details=False, model=None):
         """
-        Use an LLM (OpenAI GPT) to perform multilingual sentiment analysis.
+        Use an LLM (OpenAI or OpenRouter) to perform multilingual sentiment analysis.
 
         The model is asked to return a JSON object containing:
         - label: Positive/Negative/Neutral
         - confidence: float 0-1
         - language: detected language (English/Hindi/Marathi/Hinglish/other)
 
+        Provider selection is automatic: if `OPENAI_API_KEY` is set the
+        official OpenAI endpoint is used; otherwise if `OPENROUTER_API_KEY`
+        exists the request is sent through OpenRouter with model
+        `openai/gpt-oss-20b:free` by default.
+
         Args:
             text (str): Text to analyze
             show_details (bool): If true, request extra detail from the LLM
-            model (str): Optional model override (e.g. "gpt-4" or "gpt-3.5-turbo")
+            model (str): Optional model override (e.g. "gpt-4", "gpt-3.5-turbo",
+                         or OpenRouter model identifier)  
         Returns:
             dict: Sentiment result similar to other analyzers.
         """
-        if not openai or not openai.api_key:
-            logger.warning("LLM analysis requested but OpenAI is not configured; falling back to hybrid")
+        # Determine which client to use: prefer OpenAI, fallback to OpenRouter
+        client = self.openai_client or self.openrouter_client
+        if not client:
+            logger.warning("LLM analysis requested but no LLM client configured; falling back to hybrid")
             return self.analyze_sentiment(text, show_details=show_details, use_hybrid=True)
 
         try:
-            model = model or os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
+            # Determine which provider is active
+            is_openrouter = (self.openai_client is None) and (self.openrouter_client is not None)
+
+            # choose model based on which key/provider is configured
+            if not model:
+                if is_openrouter:
+                    # using OpenRouter; allow override via OPENROUTER_MODEL
+                    model = os.getenv('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free')
+                else:
+                    # using OpenAI; allow override via OPENAI_MODEL
+                    model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
+
             prompt = (
                 "You are a sentiment analysis assistant. "
                 "The input text may be in English, Hindi, Marathi or Hinglish. "
@@ -383,12 +427,43 @@ class SentimentAnalysisService:
                 "Text: '''" + str(text) + "'''"
             )
 
-            response = openai.ChatCompletion.create(
+            # log which provider is being used
+            provider = "OpenRouter" if is_openrouter else "OpenAI"
+            logger.info(f"LLM request sent via {provider} with model={model}")
+
+            # Use the new openai client API (>= 1.0.0)
+            response = client.chat.completions.create(
                 model=model,
                 messages=[{'role': 'user', 'content': prompt}],
                 temperature=0.0,
             )
-            content = response.choices[0].message['content']
+            content = response.choices[0].message.content
+            
+            # Attempt to parse JSON from the model response
+            import json
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse JSON from LLM: {content}")
+                # fallback: simple classification using hybrid
+                return self.analyze_sentiment(text, show_details=show_details, use_hybrid=True)
+
+            # Normalize result structure
+            result = {
+                'label': parsed.get('label', 'Neutral'),
+                'emoji': '😊' if parsed.get('label', '').lower().startswith('pos') else ('😡' if parsed.get('label', '').lower().startswith('neg') else '😐'),
+                'confidence': parsed.get('confidence', 0),
+                'language': parsed.get('language', 'unknown'),
+                'analyzer': f'LLM ({model})',
+                'raw': parsed,
+            }
+            if show_details and 'reason' in parsed:
+                result['details'] = {'reason': parsed['reason']}
+            return result
+
+        except Exception as e:
+            logger.error(f"Error in analyze_sentiment_llm: {e}")
+            return self._get_fallback_result(text, str(e))
             # Attempt to parse JSON from the model response
             import json
             try:
