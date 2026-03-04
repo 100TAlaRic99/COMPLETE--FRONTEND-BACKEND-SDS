@@ -16,6 +16,8 @@ Date: November 2025
 """
 
 import os
+import json
+import re
 import nltk
 from nltk.sentiment import SentimentIntensityAnalyzer
 from textblob import TextBlob
@@ -24,8 +26,10 @@ import logging
 # optional OpenAI LLM support (openai >= 1.0.0)
 try:
     from openai import OpenAI
+    import httpx
 except ImportError:
     OpenAI = None
+    httpx = None
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -72,13 +76,39 @@ class SentimentAnalysisService:
         if router_key:
             router_base_url = os.getenv(
                 'OPENROUTER_API_BASE',
-                'https://api.openrouter.ai/v1'
+                'https://openrouter.ai/api/v1'
             )
-            self.openrouter_client = OpenAI(
-                api_key=router_key,
-                base_url=router_base_url
+            referer = os.getenv('OPENROUTER_SITE_URL', '').strip()
+            title = os.getenv('OPENROUTER_APP_NAME', '').strip()
+            default_headers = {}
+            if referer:
+                default_headers['HTTP-Referer'] = referer
+            if title:
+                default_headers['X-OpenRouter-Title'] = title
+
+            # Create httpx client explicitly to avoid proxy env var issues
+            http_client = None
+            if httpx is not None:
+                try:
+                    http_client = httpx.Client()
+                except Exception as e:
+                    logger.warning(f"Failed to create custom httpx client: {e}")
+
+            client_kwargs = {
+                'api_key': router_key,
+                'base_url': router_base_url,
+            }
+            if default_headers:
+                client_kwargs['default_headers'] = default_headers
+            if http_client:
+                client_kwargs['http_client'] = http_client
+
+            self.openrouter_client = OpenAI(**client_kwargs)
+            logger.info(
+                "OpenRouter client initialized with base_url=%s%s",
+                router_base_url,
+                " and custom headers" if default_headers else ""
             )
-            logger.info(f"OpenRouter client initialized with base_url={router_base_url}")
 
         if not (ai_key or router_key):
             logger.warning("Neither OPENAI_API_KEY nor OPENROUTER_API_KEY set; LLM analysis disabled")
@@ -124,7 +154,11 @@ class SentimentAnalysisService:
         try:
             # LLM has highest priority if requested
             if use_llm:
-                return self.analyze_sentiment_llm(text, show_details)
+                try:
+                    return self.analyze_sentiment_llm(text, show_details)
+                except Exception as e:
+                    logger.warning(f"LLM analysis failed, using system-prompt fallback: {e}")
+                    return self.analyze_sentiment_llm_fallback(text, show_details)
 
             if use_hybrid:
                 return self.analyze_sentiment_hybrid(text, show_details)
@@ -405,90 +439,150 @@ class SentimentAnalysisService:
             logger.warning("LLM analysis requested but no LLM client configured; falling back to hybrid")
             return self.analyze_sentiment(text, show_details=show_details, use_hybrid=True)
 
+        # Determine which provider is active
+        is_openrouter = (self.openai_client is None) and (self.openrouter_client is not None)
+
+        # choose model based on which key/provider is configured
+        if not model:
+            if is_openrouter:
+                # using OpenRouter; allow override via OPENROUTER_MODEL
+                model = os.getenv('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free')
+            else:
+                # using OpenAI; allow override via OPENAI_MODEL
+                model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
+
+        provider = "OpenRouter" if is_openrouter else "OpenAI"
+        allow_system_prompt = os.getenv('LLM_ALLOW_SYSTEM_PROMPT', 'true').lower() != 'false'
+
         try:
-            # Determine which provider is active
-            is_openrouter = (self.openai_client is None) and (self.openrouter_client is not None)
-
-            # choose model based on which key/provider is configured
-            if not model:
-                if is_openrouter:
-                    # using OpenRouter; allow override via OPENROUTER_MODEL
-                    model = os.getenv('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free')
-                else:
-                    # using OpenAI; allow override via OPENAI_MODEL
-                    model = os.getenv('OPENAI_MODEL', 'gpt-3.5-turbo')
-
-            prompt = (
-                "You are a sentiment analysis assistant. "
-                "The input text may be in English, Hindi, Marathi or Hinglish. "
-                "Respond with a JSON object containing keys 'label', 'confidence', and 'language'. "
-                "Label should be one of Positive, Negative or Neutral; confidence a number between 0 and 1."
-                "If `show_details` is true, also include 'reason' explaining the choice.\n"
-                "Text: '''" + str(text) + "'''"
-            )
-
-            # log which provider is being used
-            provider = "OpenRouter" if is_openrouter else "OpenAI"
-            logger.info(f"LLM request sent via {provider} with model={model}")
-
-            # Use the new openai client API (>= 1.0.0)
-            response = client.chat.completions.create(
+            return self._invoke_llm_request(
+                client=client,
+                provider=provider,
                 model=model,
-                messages=[{'role': 'user', 'content': prompt}],
-                temperature=0.0,
+                text=text,
+                show_details=show_details,
+                use_system_prompt=allow_system_prompt
             )
-            content = response.choices[0].message.content
-            
-            # Attempt to parse JSON from the model response
-            import json
-            try:
-                parsed = json.loads(content)
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse JSON from LLM: {content}")
-                # fallback: simple classification using hybrid
-                return self.analyze_sentiment(text, show_details=show_details, use_hybrid=True)
-
-            # Normalize result structure
-            result = {
-                'label': parsed.get('label', 'Neutral'),
-                'emoji': '😊' if parsed.get('label', '').lower().startswith('pos') else ('😡' if parsed.get('label', '').lower().startswith('neg') else '😐'),
-                'confidence': parsed.get('confidence', 0),
-                'language': parsed.get('language', 'unknown'),
-                'analyzer': f'LLM ({model})',
-                'raw': parsed,
-            }
-            if show_details and 'reason' in parsed:
-                result['details'] = {'reason': parsed['reason']}
-            return result
-
         except Exception as e:
+            if allow_system_prompt and self._is_system_prompt_error(e):
+                logger.warning(
+                    "Provider rejected system prompts (model=%s); retrying with user-only instructions",
+                    model
+                )
+                try:
+                    return self._invoke_llm_request(
+                        client=client,
+                        provider=provider,
+                        model=model,
+                        text=text,
+                        show_details=show_details,
+                        use_system_prompt=False
+                    )
+                except Exception as retry_error:
+                    logger.error(f"LLM retry without system prompt failed: {retry_error}")
+                    return self._get_fallback_result(text, str(retry_error))
+
             logger.error(f"Error in analyze_sentiment_llm: {e}")
             return self._get_fallback_result(text, str(e))
-            # Attempt to parse JSON from the model response
-            import json
-            try:
-                parsed = json.loads(content)
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse JSON from LLM: {content}")
-                # fallback: simple classification using hybrid
-                return self.analyze_sentiment(text, show_details=show_details, use_hybrid=True)
 
-            # Normalize result structure
-            result = {
-                'label': parsed.get('label', 'Neutral'),
-                'emoji': '😊' if parsed.get('label', '').lower().startswith('pos') else ('😡' if parsed.get('label', '').lower().startswith('neg') else '😐'),
-                'confidence': parsed.get('confidence', 0),
-                'language': parsed.get('language', 'unknown'),
-                'analyzer': f'LLM ({model})',
-                'raw': parsed,
-            }
-            if show_details and 'reason' in parsed:
-                result['details'] = {'reason': parsed['reason']}
-            return result
+    def _invoke_llm_request(self, client, provider, model, text, show_details, use_system_prompt=True):
+        logger.info(
+            "LLM request sent via %s with model=%s (system_prompt=%s)",
+            provider,
+            model,
+            'enabled' if use_system_prompt else 'disabled'
+        )
 
-        except Exception as e:
-            logger.error(f"Error in analyze_sentiment_llm: {e}")
-            return self._get_fallback_result(text, str(e))
+        messages = self._build_llm_messages(text, show_details, use_system_prompt)
+
+        response_kwargs = {
+            'model': model,
+            'messages': messages,
+            'temperature': 0.0,
+        }
+
+        enforce_json = os.getenv('LLM_ENFORCE_JSON', 'true').lower() != 'false'
+        if enforce_json:
+            response_kwargs['response_format'] = {'type': 'json_object'}
+
+        response = client.chat.completions.create(**response_kwargs)
+        content = response.choices[0].message.content or ''
+
+        parsed = self._parse_llm_response(content)
+
+        result = {
+            'label': parsed.get('label', 'Neutral'),
+            'emoji': '😊' if parsed.get('label', '').lower().startswith('pos') else ('😡' if parsed.get('label', '').lower().startswith('neg') else '😐'),
+            'confidence': parsed.get('confidence', 0),
+            'language': parsed.get('language', 'unknown'),
+            'analyzer': f'LLM ({provider} / {model})',
+            'provider': provider,
+            'model': model,
+            'raw': parsed,
+        }
+        if show_details and 'reason' in parsed:
+            result['details'] = {'reason': parsed['reason']}
+        return result
+
+    def _build_llm_messages(self, text, show_details, use_system_prompt=True):
+        """Create chat messages that force the model to emit raw JSON only."""
+        detail_clause = (
+            "Include a concise 'reason' field explaining the sentiment." if show_details else "Do not include a 'reason' field unless it is necessary."
+        )
+        system_prompt = (
+            "You are a strict sentiment analysis engine. "
+            "Always respond with a single JSON object and NOTHING else. "
+            "Never wrap the JSON in code fences, markdown, prose, or commentary."
+        )
+        schema_prompt = (
+            "Output JSON with keys: label (Positive/Negative/Neutral), confidence (number 0-1), "
+            "language (English/Hindi/Marathi/Hinglish/Other). "
+            f"{detail_clause}"
+        )
+        user_prompt = (
+            f"Text to analyze: {str(text)}"
+        )
+
+        if use_system_prompt:
+            return [
+                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": schema_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+
+        combined_prompt = (
+            f"{system_prompt} {schema_prompt}\n{user_prompt}"
+        )
+        return [{"role": "user", "content": combined_prompt}]
+
+    def _parse_llm_response(self, content):
+        """Strip any formatting and parse JSON content from the LLM response."""
+        cleaned = content.strip()
+
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
+            cleaned = re.sub(r"```$", "", cleaned).strip()
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    pass
+
+        logger.warning("Failed to parse JSON from LLM: %s", content)
+        raise ValueError("LLM response was not valid JSON")
+
+    @staticmethod
+    def _is_system_prompt_error(error):
+        message = str(error).lower()
+        return (
+            'developer instruction is not enabled' in message
+            or 'system instruction is not enabled' in message
+        )
     
     def get_test_samples(self):
         """

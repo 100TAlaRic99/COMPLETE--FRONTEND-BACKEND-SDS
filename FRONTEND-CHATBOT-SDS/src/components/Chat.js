@@ -164,24 +164,28 @@ function Chat({ user, onLogout }) {
                         <span className="sentiment-label">{message.sentiment.label}</span>
                       </div>
                       <div className="sentiment-scores">
-                        <div className="score-item">
-                          <span className="score-label">Positive:</span>
-                          <span className="score-value">
-                            {(message.sentiment.scores.pos * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="score-item">
-                          <span className="score-label">Neutral:</span>
-                          <span className="score-value">
-                            {(message.sentiment.scores.neu * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                        <div className="score-item">
-                          <span className="score-label">Negative:</span>
-                          <span className="score-value">
-                            {(message.sentiment.scores.neg * 100).toFixed(1)}%
-                          </span>
-                        </div>
+                        {message.sentiment.scores && (
+                          <>
+                            <div className="score-item">
+                              <span className="score-label">Positive:</span>
+                              <span className="score-value">
+                                {(message.sentiment.scores.pos * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="score-item">
+                              <span className="score-label">Neutral:</span>
+                              <span className="score-value">
+                                {(message.sentiment.scores.neu * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="score-item">
+                              <span className="score-label">Negative:</span>
+                              <span className="score-value">
+                                {(message.sentiment.scores.neg * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                          </>
+                        )}
                         <div className="score-item compound">
                           <span className="score-label">
                             {message.sentiment.combined_score !== undefined ? 'Combined:' : 'Compound:'}
@@ -194,7 +198,9 @@ function Chat({ user, onLogout }) {
                           <div className="score-item analyzer">
                             <span className="score-label">Analyzer:</span>
                             <span className="score-value analyzer-name">
-                              {message.sentiment.analyzer}
+                              {message.sentiment.provider 
+                                ? `${message.sentiment.provider} (${message.sentiment.model || 'unknown'})`
+                                : message.sentiment.analyzer}
                             </span>
                           </div>
                         )}
