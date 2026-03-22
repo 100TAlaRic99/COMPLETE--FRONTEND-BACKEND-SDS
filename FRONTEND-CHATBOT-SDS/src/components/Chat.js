@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import api from '../api/axios';
-import { Send, LogOut, History, Trash2, User, AlertCircle } from 'lucide-react';
+import { Send, LogOut, History, Trash2, User, AlertCircle, LifeBuoy } from 'lucide-react';
 import './Chat.css';
 
 function Chat({ user, onLogout }) {
@@ -116,6 +116,13 @@ function Chat({ user, onLogout }) {
         <div className="header-right">
           <button className="icon-button" onClick={loadHistory} title="View History">
             <History size={20} />
+          </button>
+          <button
+            className="icon-button"
+            onClick={() => window.dispatchEvent(new Event('support:open'))}
+            title="Support"
+          >
+            <LifeBuoy size={20} />
           </button>
           <div className="user-info">
             <User size={20} />
