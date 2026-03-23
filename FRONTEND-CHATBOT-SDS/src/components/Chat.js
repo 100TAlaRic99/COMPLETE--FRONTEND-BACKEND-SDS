@@ -108,6 +108,9 @@ function Chat({ user, onLogout }) {
 
   return (
     <div className="chat-container">
+      <div className="app-header">
+        <h1>Semantic Detection System</h1>
+      </div>
       <div className="chat-header">
         <div className="header-left">
           <h1>Sentiment Analysis Chatbot</h1>

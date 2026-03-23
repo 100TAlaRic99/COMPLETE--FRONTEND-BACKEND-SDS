@@ -38,6 +38,9 @@ function App() {
   return (
     <Router>
       <div className="App">
+        <div className="app-header">
+          <h1>Semantic Detection System</h1>
+        </div>
         <Routes>
           <Route 
             path="/login" 
