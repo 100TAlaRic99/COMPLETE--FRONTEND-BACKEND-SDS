@@ -113,7 +113,6 @@ function Chat({ user, onLogout }) {
       </div>
       <div className="chat-header">
         <div className="header-left">
-          <h1>Sentiment Analysis Chatbot</h1>
           <p>Analyze the sentiment of your text</p>
         </div>
         <div className="header-right">
