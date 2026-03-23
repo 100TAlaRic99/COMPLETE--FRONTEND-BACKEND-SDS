@@ -8,6 +8,20 @@
   box-shadow: 0 0 60px rgba(0, 0, 0, 0.2);
 }
 
+.app-header {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  text-align: center;
+  padding: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+}
+
 .chat-header {
   display: flex;
   justify-content: space-between;

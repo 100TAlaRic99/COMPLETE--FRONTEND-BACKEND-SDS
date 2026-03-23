@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/axios';
-import { UserPlus, User, Mail, Lock, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { UserPlus, User, Mail, Lock, AlertCircle, Eye, EyeOff, LifeBuoy } from 'lucide-react';
 import './Auth.css';
 
 function Register({ onRegister }) {
@@ -158,6 +158,14 @@ function Register({ onRegister }) {
           <p>
             Already have an account? <Link to="/login">Login here</Link>
           </p>
+          <button
+            type="button"
+            className="support-link"
+            onClick={() => window.dispatchEvent(new Event('support:open'))}
+          >
+            <LifeBuoy size={16} />
+            Support
+          </button>
         </div>
       </div>
     </div>

@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Login from './components/Login';
 import Register from './components/Register';
 import Chat from './components/Chat';
+import SupportContact from './components/SupportContact';
 import './App.css';
 
 function App() {
@@ -37,6 +38,9 @@ function App() {
   return (
     <Router>
       <div className="App">
+        <div className="app-header">
+          <h1>Semantic Detection System</h1>
+        </div>
         <Routes>
           <Route 
             path="/login" 
@@ -67,6 +71,7 @@ function App() {
             element={<Navigate to={isAuthenticated ? "/chat" : "/login"} />} 
           />
         </Routes>
+        <SupportContact />
       </div>
     </Router>
   );
