@@ -165,6 +165,10 @@ def analyze():
         }
         
         chats_collection.insert_one(chat_entry)
+
+        print("✅ INSERT CALLED")
+        print("USER ID:", current_user_id)
+        print("TEXT:", text)
         
         return jsonify({
             'text': text,
@@ -303,6 +307,10 @@ def analyze_detailed():
                 'timestamp': datetime.now(timezone.utc)
             }
             chats_collection.insert_one(chat_entry)
+
+            print("✅ INSERT CALLED")
+            print("USER ID:", current_user_id)
+            print("TEXT:", text)
         
         return jsonify({
             'text': text,

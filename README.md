@@ -65,6 +65,8 @@ cd backend
 
 # Create virtual environment :PS : note : this step needs to be done only once while initialisng the app .. !!
 python3 -m venv venv
+# For windows if above command does not work:-
+python -m venv venv
 
 # Activate virtual environment
 # On macOS/Linux:
