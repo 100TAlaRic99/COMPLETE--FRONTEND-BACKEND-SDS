@@ -262,6 +262,8 @@ class SentimentAnalysisService:
                 'label': sentiment_label,
                 'emoji': emoji,
                 'combined_score': round(combined_score, 4),
+                # Keep "compound" for compatibility with VADER-style consumers.
+                'compound': round(combined_score, 4),
                 'confidence': round(confidence, 4),
                 'analyzer': 'Hybrid (VADER + TextBlob)',
                 'vader_score': round(vader_compound, 4),
@@ -510,10 +512,34 @@ class SentimentAnalysisService:
 
         parsed = self._parse_llm_response(content)
 
+        raw_label = str(parsed.get('label', 'Neutral')).strip()
+        normalized_label = raw_label.lower()
+        if normalized_label.startswith('pos'):
+            label = 'Positive'
+        elif normalized_label.startswith('neg'):
+            label = 'Negative'
+        else:
+            label = 'Neutral'
+
+        try:
+            confidence = float(parsed.get('confidence', 0) or 0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        confidence = max(0.0, min(confidence, 1.0))
+
+        # For LLM mode, derive a VADER-style compound score in [-1, 1].
+        if label == 'Positive':
+            compound = confidence
+        elif label == 'Negative':
+            compound = -confidence
+        else:
+            compound = 0.0
+
         result = {
-            'label': parsed.get('label', 'Neutral'),
-            'emoji': '😊' if parsed.get('label', '').lower().startswith('pos') else ('😡' if parsed.get('label', '').lower().startswith('neg') else '😐'),
-            'confidence': parsed.get('confidence', 0),
+            'label': label,
+            'emoji': '😊' if label == 'Positive' else ('😡' if label == 'Negative' else '😐'),
+            'confidence': round(confidence, 4),
+            'compound': round(compound, 4),
             'language': parsed.get('language', 'unknown'),
             'analyzer': f'LLM ({provider} / {model})',
             'provider': provider,

@@ -30,6 +30,22 @@ jwt = JWTManager(app)
 
 # Sentiment analysis service is initialized in sentimentAnalysisService.py
 
+
+def build_chat_entry(user_id, text, sentiment_result):
+    """Build a chat document with normalized sentiment summary fields."""
+    sentiment_label = sentiment_result.get('label', 'Neutral')
+    compound_score = sentiment_result.get('compound', sentiment_result.get('combined_score', 0.0))
+
+    return {
+        'user_id': user_id,
+        'text': text,
+        'sentiment': sentiment_result,
+        'sentiment_label': sentiment_label,
+        'sentiment_compound': round(float(compound_score), 4),
+        'sentiment_analyzer': sentiment_result.get('analyzer', 'Unknown'),
+        'timestamp': datetime.now(timezone.utc)
+    }
+
 # Collections
 try:
     users_collection = mongo.db.users
@@ -157,12 +173,7 @@ def analyze():
             sentiment_result = sentiment_service.analyze_sentiment(text)
         
         # Save to chat history
-        chat_entry = {
-            'user_id': current_user_id,
-            'text': text,
-            'sentiment': sentiment_result,
-            'timestamp': datetime.now(timezone.utc)
-        }
+        chat_entry = build_chat_entry(current_user_id, text, sentiment_result)
         
         chats_collection.insert_one(chat_entry)
 
@@ -300,12 +311,7 @@ def analyze_detailed():
         
         # Optionally save to history
         if data.get('save_to_history', True):
-            chat_entry = {
-                'user_id': current_user_id,
-                'text': text,
-                'sentiment': sentiment_result,
-                'timestamp': datetime.now(timezone.utc)
-            }
+            chat_entry = build_chat_entry(current_user_id, text, sentiment_result)
             chats_collection.insert_one(chat_entry)
 
             print("✅ INSERT CALLED")
